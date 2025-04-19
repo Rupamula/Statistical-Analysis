@@ -1,0 +1,751 @@
+---
+title: "Untitled"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+date: "2025-04-15"
+---
+
+# Research Question: "How do immunological biomarkers and immune activation profiles differ in children with perinatally acquired HIV who are classified as long-term non-progressors (LTNPs), compared to HIV-positive progressors, HIV-positive individuals on treatment, and HIV-negative controls?"
+
+#Step 1: Load Required Package and Read Excel File into df1 and displaying the missing percents of the data 
+
+
+```{r load-clean-display-missing, message=FALSE, warning=FALSE}
+# Load Required Libraries
+library(dplyr)
+library(readxl)
+library(tidyr)
+
+# Define File Path and Read Sheet 2 into df1
+file_path <- "/Users/rupasree/Desktop/Dr-Alka_files/PIA_Visit1_age5.19_LTNP_rev2.2025.xlsx"
+sheet_number <- 2
+df1 <- read_excel(file_path, sheet = sheet_number)
+
+# Convert All Columns to Character
+df1 <- df1 %>% mutate(across(everything(), as.character))
+
+# Count Total Missing Values in df1
+total_values <- nrow(df1) * ncol(df1)
+is_missing <- function(x) { is.na(x) | x == "" }
+total_nulls <- sum(sapply(df1, is_missing))
+null_percentage_total <- (total_nulls / total_values) * 100
+
+# Identify Completely Empty Rows
+empty_rows <- df1 %>% filter(if_all(everything(), ~ is.na(.) | . == ""))
+
+# Display Missing Value Summary
+cat("🔍 Total missing values:", total_nulls, "\n")
+cat("📉 Missing percentage:", round(null_percentage_total, 2), "%\n")
+
+if (nrow(empty_rows) > 0) {
+  cat("⚠️ There are", nrow(empty_rows), "completely empty rows.\n")
+} else {
+  cat("✅ No completely empty rows found.\n")
+}
+
+# Remove Completely Empty Rows
+df1 <- df1 %>% filter(!if_all(everything(), ~ is.na(.) | . == ""))
+
+# Confirm Removal
+cat("🗑️ Removed", nrow(empty_rows), "entirely empty rows.\n")
+
+# Display Final Dimensions
+cat("📊 Final dataset dimensions:", dim(df1)[1], "rows x", dim(df1)[2], "columns\n")
+
+# Calculate Missing Percentage Per Column
+missing_summary <- df1 %>%
+  summarise(across(everything(), ~ mean(is.na(.) | . == "") * 100)) %>%
+  pivot_longer(cols = everything(), names_to = "Column", values_to = "Missing_Percentage") %>%
+  arrange(desc(Missing_Percentage))
+
+# Display the summary as a nice table
+knitr::kable(missing_summary, caption = "Missing Value Percentage Per Column", digits = 2)
+
+
+```
+#Step 2: Add HIV Status Category and Create df2
+```{r}
+# Categorize Based on HIV_PNP_AbsCD4 and Create df2
+
+# Ensure the column is numeric for comparison
+df2 <- df1 %>%
+  mutate(HIV_PNP_AbsCD4 = as.numeric(HIV_PNP_AbsCD4),
+         Category = case_when(
+           HIV_PNP_AbsCD4 == 1 ~ "HIV Negative",
+           HIV_PNP_AbsCD4 == 2.3 ~ "LTNP",
+           HIV_PNP_AbsCD4 == 2.4 ~ "Progressors",
+           HIV_PNP_AbsCD4 == 3 ~ "HIV Positive with Treatment",
+           TRUE ~ NA_character_
+         ))
+head(df2)
+```
+#Step 3: Generate Summary Table by HIV Category
+```{r}
+# Load required package for table display
+library(knitr)
+
+# Create summary table
+df2_summary <- df2 %>%
+  group_by(Category) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  arrange(match(Category, c("HIV Negative", "LTNP", "Progressors", "HIV Positive with Treatment")))
+
+# Display summary in a formatted table
+kable(df2_summary, col.names = c("HIV Category", "Count"))
+
+```
+#Step 4: Remove Selected Columns from df2 and Create df3
+```{r}
+# Define the columns to remove
+columns_to_remove <- c(
+  "p13_CD8.p._HIVdex.p.",
+  "Category2_followup",
+  "p7_CD2.p.CD56.n._CD4.p._RO.p._total.IL13",
+  "p7_CD56.p._total.IFNg",
+  "p7_CD56.p._total.TNFa",
+  "WHO_Stage",
+  "p7_CD2.p.CD56.n._CD4.p._RO.p._total.IL4",
+  "p7_CD2.p.CD56.n._CD4.p._RO.p._total.IL21",
+  "p7_CD2.p.CD56.n._CD4.p._RO.p._total.TNFa",
+  "p7_CD2.p.CD56.n._CD4.p._RO.n._total.IFNg",
+  "p7_CD2.p.CD56.n._CD4.p._RO.n._total.TNFa",
+  "p7_CD2.p.CD56.n._CD4.p._RO.n._total.IL4",
+  "p7_CD2.p.CD56.n._CD8.p._total.IFNg",
+  "p7_CD2.p.CD56.n._CD8.p._total.TNFa",
+  "p7_CD2.p.CD56.n._CD8.p._total.IL4",
+  "p7_CD2.p.CD56.n._CD8.p._total.IL21",
+  "Visit",
+  "Entry.Date",
+  "Sex",
+  "HIV_PNP_AbsCD4",
+  "HIV.Category",
+  "HIV_SubCategory",
+  "HIV_PNP_percentCD4"
+)
+
+# Remove columns and create df3
+df3 <- df2 %>% select(-all_of(columns_to_remove))
+
+# Print number of rows and columns in df3
+cat("df3 has", nrow(df3), "rows and", ncol(df3), "columns.\n")
+
+```
+# Step 5: Calculate Missing Count and Percentage per Sample, Using PIA
+```{r}
+# Step 6: Calculate Missing Count and Percentage per Sample, Using PIA
+
+# Confirm PIA exists
+if (!"PIA" %in% colnames(df3)) {
+  stop("PIA column not found in df3.")
+}
+
+# Calculate missing count and percentage
+missing_summary <- df3 %>%
+  mutate(across(everything(), ~ na_if(., ""))) %>%  # Treat empty strings as NA
+  rowwise() %>%
+  mutate(Missing_Count = sum(is.na(c_across(-PIA))),
+         Missing_Percentage = (Missing_Count / (ncol(df3) - 1)) * 100) %>%  # exclude PIA
+  ungroup() %>%
+  select(PIA, Category, Missing_Count, Missing_Percentage)
+
+# View top 3 rows with highest missing percentage
+missing_summary %>%
+  arrange(desc(Missing_Percentage)) %>%
+  head(3)
+
+```
+
+#Step 6: Remove Top 3 Rows with Highest Missing Percentage and Create df4
+```{r}
+# Identify top 3 PIA values with the highest missing percentage
+top3_pia <- missing_summary %>%
+  arrange(desc(Missing_Percentage)) %>%
+  slice_head(n = 3) %>%
+  pull(PIA)
+
+# Remove those rows from df3 to create df4
+df4 <- df3 %>% filter(!PIA %in% top3_pia)
+
+# Confirm number of rows removed
+cat("Removed", length(top3_pia), "rows. df4 has", nrow(df4), "rows and", ncol(df4), "columns.\n")
+```
+#Step 7: Visualize Count of Samples per HIV Category
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Step 8A: Count samples per Category
+category_counts <- df4 %>%
+  group_by(Category) %>%
+  summarise(Count = n(), .groups = "drop")
+
+# Step 8B: Bar Chart with Count Labels
+ggplot(category_counts, aes(x = Category, y = Count, fill = Category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Count), vjust = -0.5, size = 5) +
+  labs(title = "Sample Count per HIV Category", x = "HIV Category", y = "Count") +
+  ylim(0, 50) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Step 8C: Pie Chart with Count Labels
+category_counts <- category_counts %>%
+  mutate(Label = paste0(Category, " (", Count, ")"))
+
+ggplot(category_counts, aes(x = "", y = Count, fill = Label)) +
+  geom_col(width = 1) +
+  coord_polar(theta = "y") +
+  labs(title = "Proportion of HIV Categories (by Count)") +
+  theme_void()
+
+```
+#Step 8: Visualize of heatmap
+```{r}
+# Load required libraries
+library(dplyr)
+library(tibble)
+library(pheatmap)
+library(RColorBrewer)
+
+# Step 1: Create AgeGroup and annotation from df4
+df4 <- df4 %>%
+  mutate(
+    Age_years = as.numeric(Age_years),
+    AgeGroup = cut(Age_years, breaks = c(0, 9, 14, 19),
+                   labels = c("5-9", "10-14", "15-19"))
+  )
+
+# Step 2: Create annotation dataframe (Category and AgeGroup)
+annotation <- df4 %>%
+  filter(!is.na(Category) & !is.na(AgeGroup)) %>%
+  select(PIA, Category, AgeGroup) %>%
+  column_to_rownames("PIA")
+
+# Step 3: Extract immune markers (columns 4 to 126 = 123 markers)
+heatmap_data <- df4 %>%
+  filter(PIA %in% rownames(annotation)) %>%
+  select(PIA, 4:126) %>%
+  column_to_rownames("PIA") %>%
+  mutate(across(everything(), ~ as.numeric(.))) %>%
+  scale() %>%
+  t() %>%
+  as.data.frame()
+
+# Step 4: Reorder columns by Category for visual "box" effect
+annotation <- annotation[order(annotation$Category), ]
+heatmap_data <- heatmap_data[, rownames(annotation)]
+
+# Step 5: Define strong color contrast for AgeGroup
+annotation_colors <- list(
+  Category = c(
+    "HIV Negative" = "#80b1d3",
+    "LTNP" = "#fb8072",
+    "Progressors" = "#fdb462",
+    "HIV Positive with Treatment" = "#b3a2e3"
+  ),
+  AgeGroup = c(
+    "5-9" = "light green",     # Red
+    "10-14" = "#4daf4a",   # Green
+    "15-19" = "dark green"    # Blue
+  )
+)
+
+# Step 6: Compute gap positions for HIV Category boxes
+category_gaps <- cumsum(table(annotation$Category))
+
+# Step 7: Generate heatmap with horizontal boxes using `gaps_col`
+pheatmap(
+  mat = as.matrix(heatmap_data),
+  annotation_col = annotation,
+  annotation_colors = annotation_colors,
+  gaps_col = category_gaps,               # 👈 Draws horizontal separation between groups
+  cluster_cols = FALSE,                   # 👈 Keeps group order intact
+  cluster_rows = TRUE,
+  color = colorRampPalette(rev(brewer.pal(9, "RdBu")))(100),
+  show_colnames = FALSE,
+  fontsize_row = 3.2,
+  main = "Immune Marker Heatmap with HIV Category Segments (Top Boxes)",
+   na_col = "black"
+)
+
+# Step 8: Display heatmap structure info
+cat("✅ Number of immune markers (rows):", nrow(heatmap_data), "\n")
+cat("✅ Number of samples (columns):", ncol(heatmap_data), "\n\n")
+cat("📊 HIV Category Counts:\n")
+print(table(annotation$Category))
+cat("\n📊 Age Group Counts:\n")
+print(table(annotation$AgeGroup))
+
+
+```
+#Saves the image
+```{r}
+# Save square-shaped heatmap image
+png("heatmap_square.png", width = 3200, height = 3200, res = 300)
+
+pheatmap(
+  mat = as.matrix(heatmap_data),
+  annotation_col = annotation,
+  annotation_colors = annotation_colors,
+  gaps_col = category_gaps,
+  cluster_cols = FALSE,
+  cluster_rows = TRUE,
+  color = colorRampPalette(rev(brewer.pal(9, "RdBu")))(100),
+  show_colnames = FALSE,
+  fontsize_row = 4.5,
+  main = "Immune Marker Heatmap - Square View (Category & AgeGroup)",
+  na_col = "black"
+)
+
+dev.off()
+
+```
+
+#plot:Shows the expression variation in the top 6 biomarkers across all 4 groups. Visually distinguishes LTNP vs others—making it easier to observe unique biomarker patterns
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Step 1: Ensure immune marker columns are numeric
+immune_cols <- colnames(df4)[4:126]
+df4[immune_cols] <- df4[immune_cols] %>%
+  mutate(across(everything(), as.numeric))
+
+# Step 2: Find top 6 most variable biomarkers (by SD)
+top6_markers <- df4 %>%
+  summarise(across(all_of(immune_cols), ~ sd(., na.rm = TRUE))) %>%
+  pivot_longer(everything(), names_to = "Marker", values_to = "SD") %>%
+  arrange(desc(SD)) %>%
+  slice(1:6) %>%
+  pull(Marker)
+
+# Step 3: Reshape data for plotting
+df_long <- df4 %>%
+  select(PIA, Category, all_of(top6_markers)) %>%
+  pivot_longer(cols = all_of(top6_markers), names_to = "Marker", values_to = "Expression") %>%
+  drop_na()
+
+# Step 4: Plot faceted boxplots
+ggplot(df_long, aes(x = Category, y = Expression, fill = Category)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(~ Marker, scales = "free_y", nrow = 2) +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(face = "bold"),
+        legend.position = "none") +
+  labs(
+    title = "Top 6 Variable Immune Biomarkers by HIV Category",
+    y = "Expression Level",
+    x = "HIV Category"
+  )
+```
+The top six immune bio-markers visualized—Absolute_CD4, IFABP_pg.mL, p1_CD8.p._totalmemory_in.CD8, p9a_CD8p_GZB_total, sCD163_ng.ml, and sCD40L_pg.mL—were selected based on their high standard deviation (SD) across all samples, indicating greater inter-individual variability in immune response. 
+
+#plot:Shows the expression variation in the HIV disease progession immune bio-markers across all 4 groups. Visually distinguishes LTNP vs others—making it easier to observe unique biomarker patterns
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Step 1: Ensure immune marker columns are numeric
+immune_cols <- colnames(df4)[4:126]
+df4[immune_cols] <- df4[immune_cols] %>%
+  mutate(across(everything(), as.numeric))
+
+# Step 2: Specify actual biomarker names directly from df4
+custom_markers <- c(
+  "percent_CD4",
+  "HIV_log_copies.ml",
+  "p4_CD4.CD8.ratio",
+  "p9a_CD4.p._RO.p._CD38.p..DR.p.",
+  "p9a_CD8.p._.CD38.p..DR.p."
+)
+
+# Step 3: Reshape data for plotting
+df_long_custom <- df4 %>%
+  select(PIA, Category, all_of(custom_markers)) %>%
+  pivot_longer(cols = all_of(custom_markers), names_to = "Marker", values_to = "Expression") %>%
+  drop_na()
+
+# Step 4: Faceted boxplot
+ggplot(df_long_custom, aes(x = Category, y = Expression, fill = Category)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(~ Marker, scales = "free_y", nrow = 2) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold"),
+    legend.position = "none"
+  ) +
+  labs(
+    title = "Selected Immune Biomarkers by HIV Category",
+    y = "Expression Level",
+    x = "HIV Category"
+  )
+
+```
+
+#This grouped bar chart visually compares LTNP with each category for the top 10 differing immune biomarkers.
+```{r}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Step 1: Ensure immune marker columns are numeric
+immune_cols <- colnames(df4)[4:126]
+df4[immune_cols] <- df4[immune_cols] %>%
+  mutate(across(everything(), as.numeric))
+
+# Step 2: Calculate mean expression for each Category and each immune marker
+marker_means <- df4 %>%
+  filter(Category %in% c("LTNP", "HIV Negative", "Progressors", "HIV Positive with Treatment")) %>%
+  group_by(Category) %>%
+  summarise(across(all_of(immune_cols), ~ mean(., na.rm = TRUE)), .groups = "drop")
+
+# Step 3: Reshape to long format
+marker_means_long <- marker_means %>%
+  pivot_longer(cols = -Category, names_to = "Marker", values_to = "Mean_Expression")
+
+# Step 4: Select top 10 most differentially expressed markers for visual clarity
+top10_diff <- marker_means_long %>%
+  pivot_wider(names_from = Category, values_from = Mean_Expression) %>%
+  mutate(Diff = `LTNP` - ((`HIV Negative` + Progressors + `HIV Positive with Treatment`) / 3)) %>%
+  arrange(desc(abs(Diff))) %>%
+  slice(1:10) %>%
+  pull(Marker)
+
+# Step 5: Filter the data for top 10 markers
+plot_df <- marker_means_long %>%
+  filter(Marker %in% top10_diff)
+
+# Step 6 (Updated): Plot grouped bar chart with correct marker names
+ggplot(plot_df, aes(x = factor(Marker, levels = top10_diff), y = Mean_Expression, fill = Category)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Top 10 Immune Markers: LTNP vs Other Categories",
+    y = "Mean Expression",
+    x = "Immune Marker"
+  )
+
+
+```
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Convert all immune marker columns to numeric
+immune_cols <- colnames(df4)[4:126]
+df4[immune_cols] <- df4[immune_cols] %>%
+  mutate(across(everything(), as.numeric))
+
+# Step 2: Compute average expression per individual across all 123 markers
+df4 <- df4 %>%
+  rowwise() %>%
+  mutate(Average_Immune_Expression = mean(c_across(all_of(immune_cols)), na.rm = TRUE)) %>%
+  ungroup()
+
+# Step 3: Group by HIV Category and compute group averages
+group_summary <- df4 %>%
+  group_by(Category) %>%
+  summarise(Mean_Immune = mean(Average_Immune_Expression, na.rm = TRUE),
+            SD_Immune = sd(Average_Immune_Expression, na.rm = TRUE),
+            .groups = "drop")
+
+# Step 4: Plot the bar chart
+ggplot(group_summary, aes(x = Category, y = Mean_Immune, fill = Category)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_errorbar(aes(ymin = Mean_Immune - SD_Immune, ymax = Mean_Immune + SD_Immune),
+                width = 0.2) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Overall Immune Marker Burden Across HIV Categories",
+    x = "HIV Category",
+    y = "Average Expression of Immune Markers"
+  ) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+```
+To assess overall immune activation profiles across HIV phenotypes, we calculated the average expression of 123 immune biomarkers per individual by taking the mean of all marker values for each participant. This composite metric represents the individual's overall immune marker burden—a global reflection of systemic immune activity. Group-level summaries were then computed to compare the average burden across four categories: HIV Negative, HIV Positive with Treatment, LTNPs (Long-Term Non-Progressors), and Progressors. The resulting bar plot reveals that HIV-negative individuals and LTNPs exhibited the highest average immune expression, suggesting a broadly active or preserved immune profile. In contrast, the treated HIV-positive group displayed the lowest overall burden, likely due to immune suppression achieved through antiretroviral therapy. Progressors showed intermediate values, consistent with ongoing immune activation associated with disease advancement. These findings are directly aligned with the study’s aim of characterizing distinct immune activation signatures in perinatally infected children, highlighting that LTNPs may maintain immune activation levels closer to healthy controls, potentially contributing to their non-progressor phenotype despite chronic HIV infection.
+
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+
+# Step 1: Ensure immune marker columns are numeric
+immune_cols <- colnames(df4)[4:126]  # Adjust if your marker columns are in a different range
+df4[immune_cols] <- df4[immune_cols] %>%
+  mutate(across(everything(), as.numeric))
+
+# Step 2: Convert to long format (with real marker names)
+df_long <- df4 %>%
+  select(Category, all_of(immune_cols)) %>%
+  pivot_longer(-Category, names_to = "Marker", values_to = "Expression") %>%
+  filter(!is.na(Expression))
+
+# Step 3: Calculate mean expression per marker per HIV category
+marker_summary <- df_long %>%
+  group_by(Category, Marker) %>%
+  summarise(Mean_Expression = mean(Expression, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Plot bar chart with real marker names
+ggplot(marker_summary, aes(x = Marker, y = Mean_Expression, fill = Category)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal(base_size = 11) +
+  labs(
+    title = "Average Expression of Immune Markers by HIV Category",
+    x = "Immune Marker",
+    y = "Mean Expression"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 6, hjust = 1),
+    legend.position = "top"
+  )
+
+# Step 5: Optional – Create a table of immune markers if needed
+# If you want a summary or export of marker names
+marker_lookup_table <- data.frame(
+  Marker = immune_cols,
+  stringsAsFactors = FALSE
+)
+
+# Display the marker name table in Markdown/PDF output
+kable(marker_lookup_table, caption = "List of Immune Markers Used in Analysis")
+
+```
+
+#Shows the distribution of average marker expression across all 123 markers for each group.
+```{r}
+# Boxplot of expression values across markers per category
+ggplot(df_long, aes(x = Category, y = Expression, fill = Category)) +
+  geom_boxplot(outlier.size = 0.5) +
+  labs(
+    title = "Distribution of Immune Marker Expression by HIV Category",
+    y = "Expression Value", x = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+```{r shapiro-wilk-df4, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+
+# Step 1: Ensure immune markers are numeric
+immune_cols <- colnames(df4)[4:126]
+df4[immune_cols] <- df4[immune_cols] %>% mutate(across(everything(), as.numeric))
+
+# Step 2: Reshape to long format
+df_long_normality <- df4 %>%
+  select(Category, all_of(immune_cols)) %>%
+  pivot_longer(cols = -Category, names_to = "Marker", values_to = "Value") %>%
+  filter(!is.na(Value) & !is.na(Category))
+
+# Step 3: Run Shapiro-Wilk test for normality per Marker and Category
+shapiro_results <- df_long_normality %>%
+  group_by(Marker, Category) %>%
+  summarise(
+    Shapiro_p = tryCatch(shapiro.test(Value)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(Shapiro_p)
+
+# Step 4: Identify non-normal combinations (p < 0.05)
+non_normal <- shapiro_results %>% filter(Shapiro_p < 0.05)
+
+# Step 5: Output Results
+cat("🧪 Shapiro-Wilk Normality Test Results (df4):\n")
+print(shapiro_results)
+
+cat("\n❌ Marker-Category combinations violating normality (p < 0.05):\n")
+print(non_normal)
+
+cat("\n📊 Number of non-normal combinations:", nrow(non_normal), "out of", nrow(shapiro_results), "\n")
+
+# Step 6: Final conclusion
+if (nrow(non_normal) / nrow(shapiro_results) > 0.5) {
+  cat("\n⚠️ Conclusion: The data is NOT normally distributed in the majority of Marker-Category combinations.\n")
+  cat("✅ Recommendation: Use non-parametric tests (e.g., Kruskal-Wallis, Wilcoxon).\n")
+} else {
+  cat("\n✅ Conclusion: Most Marker-Category combinations do not violate normality.\n")
+  cat("📌 Recommendation: Parametric tests (e.g., t-test, ANOVA) may be appropriate.\n")
+}
+```
+
+
+#tests
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(tidyr)
+
+# Step 0: Identify immune marker columns directly from df4
+immune_cols <- colnames(df4)[!(colnames(df4) %in% c("PIA", "Category", "Age_years"))]
+
+# Step 1: Prepare data subset for testing (retain real marker names)
+immune_data <- df4 %>%
+  filter(!is.na(Category)) %>%
+  select(Category, all_of(immune_cols))
+
+# Step 2: Convert to long format and clean
+immune_long <- immune_data %>%
+  pivot_longer(-Category, names_to = "Marker", values_to = "Value") %>%
+  mutate(Value = as.numeric(Value)) %>%
+  filter(!is.na(Value))
+
+# Step 3A: T-test: LTNP vs HIV Negative
+ttest_results <- immune_long %>%
+  filter(Category %in% c("LTNP", "HIV Negative")) %>%
+  group_by(Marker) %>%
+  summarise(
+    p_value = tryCatch(t.test(Value ~ Category)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p_value)
+
+# Step 3B: Kruskal-Wallis Test (All Categories)
+kruskal_results <- immune_long %>%
+  group_by(Marker) %>%
+  summarise(
+    p_value = tryCatch(kruskal.test(Value ~ Category)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p_value)
+
+# Step 3C: Mann-Whitney U Test: LTNP vs Progressors
+wilcox_results <- immune_long %>%
+  filter(Category %in% c("LTNP", "Progressors")) %>%
+  group_by(Marker) %>%
+  summarise(
+    p_value = tryCatch(wilcox.test(Value ~ Category, exact = FALSE)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p_value)
+
+# Step 4: Show top 5 significant markers with real names
+cat("🔍 Top 5 Significant T-test Markers (LTNP vs HIV Negative):\n")
+print(ttest_results %>% slice_head(n = 5))
+
+cat("\n🔍 Top 5 Significant Kruskal-Wallis Markers (All Categories):\n")
+print(kruskal_results %>% slice_head(n = 5))
+
+cat("\n🔍 Top 5 Significant Mann-Whitney Markers (LTNP vs Progressors):\n")
+print(wilcox_results %>% slice_head(n = 5))
+
+```
+
+# Kruskal wallis test
+```{r kruskal-wallis-with-bky-summary, message=FALSE, warning=FALSE}
+# Kruskal-Wallis Test (All Categories)
+kruskal_results <- immune_long %>%
+  group_by(Marker) %>%
+  summarise(
+    p_value = tryCatch(kruskal.test(Value ~ Category)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p_value)
+
+# Significant markers before correction
+significant_kruskal <- kruskal_results %>% filter(p_value < 0.05)
+top5_kruskal <- kruskal_results %>% slice_head(n = 5)
+
+# Kruskal-Wallis with BKY correction
+kruskal_results_bky <- kruskal_results %>%
+  mutate(p_bky = p.adjust(p_value, method = "BY")) %>%
+  arrange(p_bky)
+
+significant_bky <- kruskal_results_bky %>% filter(p_bky < 0.05)
+top5_bky <- kruskal_results_bky %>% slice_head(n = 5)
+
+# Output
+cat("🔍 Top 5 Significant Markers (Uncorrected Kruskal-Wallis):\n")
+print(top5_kruskal)
+
+cat("\n All Significant Markers (Uncorrected Kruskal-Wallis, p < 0.05):\n")
+print(significant_kruskal)
+
+cat("\n Number of significant markers before BKY correction:", nrow(significant_kruskal), "\n")
+
+cat("\n Top 5 Significant Markers (BKY-adjusted Kruskal-Wallis):\n")
+print(top5_bky)
+
+cat("\n All Significant Markers (BKY-adjusted p < 0.05):\n")
+print(significant_bky)
+
+cat("\n Number of significant markers after BKY correction:", nrow(significant_bky), "\n")
+
+```
+
+# **Mann-Whitney U Test Chunk (LTNP vs Progressors)**
+```{r mann-whitney-top-and-significant, message=FALSE, warning=FALSE}
+# Mann-Whitney U Test: LTNP vs Progressors
+wilcox_results <- immune_long %>%
+  filter(Category %in% c("LTNP", "Progressors")) %>%
+  group_by(Marker) %>%
+  summarise(
+    p_value = tryCatch(wilcox.test(Value ~ Category, exact = FALSE)$p.value, error = function(e) NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p_value)
+
+# Top 5 significant markers
+top5_wilcox <- wilcox_results %>% slice_head(n = 5)
+
+# All markers with p < 0.05
+significant_wilcox <- wilcox_results %>% filter(p_value < 0.05)
+
+# Output
+cat("🔍 Top 5 Significant Mann-Whitney Markers (LTNP vs Progressors):\n")
+print(top5_wilcox)
+
+cat("\n✅ All Significant Markers (Mann-Whitney, p < 0.05):\n")
+print(significant_wilcox)
+
+```
+
+```{r}
+# Set threshold
+alpha <- 0.05
+
+# Kruskal-Wallis interpretation
+cat("🧪 Kruskal-Wallis Test (All Categories):\n")
+sig_kruskal <- kruskal_results %>% filter(!is.na(p_value), p_value < alpha)
+if (nrow(sig_kruskal) > 0) {
+  cat("There are", nrow(sig_kruskal),
+      "immune markers showing significant differences across the 4 categories (p < 0.05).\n")
+  cat("This reflects the impact of disease stage and treatment on immune activation.\n\n")
+} else {
+  cat("No immune markers showed significant differences across all four groups (p ≥ 0.05).\n\n")
+}
+
+# Mann-Whitney U interpretation
+cat("🧪 Mann-Whitney U Test (LTNP vs Progressors):\n")
+sig_wilcox <- wilcox_results %>% filter(!is.na(p_value), p_value < alpha)
+if (nrow(sig_wilcox) > 0) {
+  cat("LTNPs differ significantly from Progressors in", nrow(sig_wilcox),
+      "immune markers (p < 0.05).\n")
+  cat("These differences suggest potential protective immune factors in LTNPs.\n\n")
+} else {
+  cat("No significant difference detected between LTNP and Progressors (p ≥ 0.05).\n\n")
+}
+
+```
+#RESULT
+Children with perinatally acquired HIV classified as long-term non-progressors (LTNPs) exhibit distinct immunological profiles compared to HIV-negative controls, progressors, and those on treatment. The significant differences in immune marker expression—especially the 66 markers vs HIV-negative and 17 markers vs progressors—suggest that LTNPs maintain a unique immune activation state that may contribute to their ability to control disease progression without treatment. These findings support the hypothesis that immune biomarkers can differentiate clinical trajectories in pediatric HIV.
+
+
